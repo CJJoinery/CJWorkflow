@@ -611,6 +611,7 @@ td {
   padding: 20px 18px;
   font-weight: 800;
   color: #111827;
+  height: 108px;
 }
 
 .date-header-cell {
@@ -721,7 +722,6 @@ td {
   height: 44px;
   border-radius: 8px;
   color: white;
-  margin-top: 24px;
   padding: 0 34px 0 14px;
   display: flex;
   align-items: center;
@@ -800,6 +800,11 @@ td {
 }
 
 .planner-legend b {
+  width: 13px;
+  height: 13px;
+  border-radius: 999px;
+  display: inline-block;
+}
   width: 13px;
   height: 13px;
   border-radius: 999px;
