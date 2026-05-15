@@ -18,6 +18,7 @@ type Staff = {
   id: string;
   role: string;
   trade: string | null;
+  full_name: string | null;
 };
 
 type Task = {
@@ -70,8 +71,8 @@ export default function ProgrammePage() {
 
     const { data: staffData } = await supabase
       .from("profiles")
-      .select("id, role, trade")
-      .order("role");
+      .select("id, role, trade, full_name")
+      .order("full_name", { ascending: true });
 
     const { data: taskData } = await supabase
       .from("programme_tasks")
@@ -161,10 +162,18 @@ export default function ProgrammePage() {
     loadData();
   }
 
+  function staffDisplayName(member: Staff) {
+    return `${member.full_name || member.role || "Staff"} - ${
+      member.trade || "Joinery"
+    }`;
+  }
+
   function staffName(id: string | null) {
     if (!id) return "-";
+
     const member = staff.find((s) => s.id === id);
-    return member ? `${member.role} - ${member.trade || "Joinery"}` : id;
+
+    return member ? staffDisplayName(member) : id;
   }
 
   return (
@@ -215,7 +224,7 @@ export default function ProgrammePage() {
             <option value="">Assign Staff</option>
             {staff.map((member) => (
               <option key={member.id} value={member.id}>
-                {member.role} - {member.trade || "Joinery"}
+                {staffDisplayName(member)}
               </option>
             ))}
           </select>
@@ -279,16 +288,21 @@ export default function ProgrammePage() {
             {tasks.map((task) => (
               <tr key={task.id}>
                 <td>{task.plot_number || "-"}</td>
+
                 <td>
                   <strong>{task.task_name}</strong>
                   <br />
-                  <small>{task.work_address}</small>
+                  <small>{task.work_address || ""}</small>
                 </td>
+
                 <td>{task.trade || "-"}</td>
+
                 <td>{staffName(task.assigned_staff)}</td>
+
                 <td>
                   {task.start_date} → {task.end_date}
                 </td>
+
                 <td>
                   <select
                     value={task.status || "Booked"}
@@ -301,6 +315,7 @@ export default function ProgrammePage() {
                     <option value="On Hold">On Hold</option>
                   </select>
                 </td>
+
                 <td className="no-print">
                   <button
                     className="danger-button"
