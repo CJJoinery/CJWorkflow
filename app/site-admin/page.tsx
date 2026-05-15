@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "../../lib/supabase";
+
 type Site = {
   id: string;
   site_name: string;
@@ -20,6 +21,7 @@ type StaffMember = {
   id: string;
   role: string;
   trade: string | null;
+  full_name: string | null;
 };
 
 export default function SiteAdminPage() {
@@ -34,6 +36,11 @@ export default function SiteAdminPage() {
   const [selectedSiteId, setSelectedSiteId] = useState("");
   const [workTypeName, setWorkTypeName] = useState("");
   const [workTypeColour, setWorkTypeColour] = useState("#78212e");
+
+  const [staffFullName, setStaffFullName] = useState("");
+  const [staffEmail, setStaffEmail] = useState("");
+  const [staffPassword, setStaffPassword] = useState("");
+  const [staffRole, setStaffRole] = useState("staff");
 
   const [message, setMessage] = useState("");
 
@@ -54,7 +61,8 @@ export default function SiteAdminPage() {
 
     const { data: staffData } = await supabase
       .from("profiles")
-      .select("*");
+      .select("*")
+      .order("full_name", { ascending: true });
 
     setSites(siteData || []);
     setWorkTypes(workTypeData || []);
@@ -63,6 +71,43 @@ export default function SiteAdminPage() {
     if (!selectedSiteId && siteData && siteData.length > 0) {
       setSelectedSiteId(siteData[0].id);
     }
+  }
+
+  async function createStaffLogin() {
+    setMessage("");
+
+    if (!staffFullName.trim() || !staffEmail.trim() || !staffPassword.trim()) {
+      setMessage("Please enter staff name, email and password.");
+      return;
+    }
+
+    const response = await fetch("/api/create-staff-user", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        full_name: staffFullName.trim(),
+        email: staffEmail.trim(),
+        password: staffPassword.trim(),
+        role: staffRole,
+      }),
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      setMessage(`Create staff error: ${result.error}`);
+      return;
+    }
+
+    setStaffFullName("");
+    setStaffEmail("");
+    setStaffPassword("");
+    setStaffRole("staff");
+
+    setMessage("Staff login created successfully.");
+    loadAdminData();
   }
 
   async function addSite() {
@@ -87,13 +132,14 @@ export default function SiteAdminPage() {
     setSiteName("");
     setDeveloper("CJ Joinery");
     setStatus("active");
+
     setMessage("Job/site added.");
     loadAdminData();
   }
 
   async function deleteSite(id: string) {
     const confirmed = confirm(
-      "Delete this job/site? This may also delete linked tasks."
+      "Delete this job/site? This may also delete linked booked work."
     );
 
     if (!confirmed) return;
@@ -135,6 +181,7 @@ export default function SiteAdminPage() {
 
     setWorkTypeName("");
     setWorkTypeColour("#78212e");
+
     setMessage("Work type added.");
     loadAdminData();
   }
@@ -169,35 +216,149 @@ export default function SiteAdminPage() {
     loadAdminData();
   }
 
+  async function updateStaffName(id: string, fullName: string) {
+    const { error } = await supabase
+      .from("profiles")
+      .update({ full_name: fullName })
+      .eq("id", id);
+
+    if (error) {
+      setMessage(`Name update error: ${error.message}`);
+      return;
+    }
+
+    setMessage("Staff name updated.");
+    loadAdminData();
+  }
+
   return (
     <main>
       <h1>Admin</h1>
       <p>
-        Manage jobs/sites, work types and staff access for the CJ Joinery work
-        planner.
+        Manage staff logins, jobs, work types and permissions for the CJ Joinery
+        work planner.
       </p>
 
       {message && <div className="status-box">{message}</div>}
 
       <div className="grid">
         <div className="stat">
+          <strong>{staff.length}</strong>
+          Staff Users
+        </div>
+
+        <div className="stat">
           <strong>{sites.length}</strong>
           Jobs / Sites
         </div>
+
         <div className="stat">
           <strong>{workTypes.length}</strong>
           Work Types
         </div>
-        <div className="stat">
-          <strong>{staff.length}</strong>
-          Staff Users
+      </div>
+
+      <div className="card">
+        <h2>Create Staff Login</h2>
+        <p>
+          Add a staff login for the app. Owners and managers can access admin
+          areas. Staff users can view and update their booked work.
+        </p>
+
+        <div style={{ display: "grid", gap: 12, maxWidth: 650 }}>
+          <input
+            value={staffFullName}
+            onChange={(e) => setStaffFullName(e.target.value)}
+            placeholder="Full name"
+          />
+
+          <input
+            type="email"
+            value={staffEmail}
+            onChange={(e) => setStaffEmail(e.target.value)}
+            placeholder="Email address"
+          />
+
+          <input
+            type="password"
+            value={staffPassword}
+            onChange={(e) => setStaffPassword(e.target.value)}
+            placeholder="Temporary password"
+          />
+
+          <select
+            value={staffRole}
+            onChange={(e) => setStaffRole(e.target.value)}
+          >
+            <option value="staff">Staff</option>
+            <option value="manager">Manager</option>
+            <option value="owner">Owner</option>
+          </select>
+
+          <button onClick={createStaffLogin}>Create Staff Login</button>
         </div>
+      </div>
+
+      <div className="card">
+        <h2>Staff Permissions</h2>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Staff Name</th>
+              <th>Role</th>
+              <th>Work Type</th>
+              <th>User ID</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {staff.map((member) => (
+              <tr key={member.id}>
+                <td>
+                  <input
+                    defaultValue={member.full_name || ""}
+                    placeholder="Staff name"
+                    onBlur={(e) =>
+                      updateStaffName(member.id, e.target.value)
+                    }
+                  />
+                </td>
+
+                <td>
+                  <select
+                    value={member.role}
+                    onChange={(e) =>
+                      updateStaffRole(member.id, e.target.value)
+                    }
+                  >
+                    <option value="owner">Owner</option>
+                    <option value="manager">Manager</option>
+                    <option value="staff">Staff</option>
+                  </select>
+                </td>
+
+                <td>{member.trade || "Joinery"}</td>
+
+                <td>
+                  <small>{member.id}</small>
+                </td>
+              </tr>
+            ))}
+
+            {staff.length === 0 && (
+              <tr>
+                <td colSpan={4}>No staff users created yet.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
 
       <div className="card">
         <h2>Add Job / Site</h2>
 
-        <div style={{ display: "grid", gap: 12, maxWidth: 600 }}>
+        <div style={{ display: "grid", gap: 12, maxWidth: 650 }}>
           <input
             value={siteName}
             onChange={(e) => setSiteName(e.target.value)}
@@ -232,6 +393,7 @@ export default function SiteAdminPage() {
               <th className="no-print">Action</th>
             </tr>
           </thead>
+
           <tbody>
             {sites.map((site) => (
               <tr key={site.id}>
@@ -262,12 +424,9 @@ export default function SiteAdminPage() {
 
       <div className="card">
         <h2>Add Work Type</h2>
-        <p>
-          Examples: 1st Fix Joinery, 2nd Fix Joinery, Doors, Skirting,
-          Kitchens, Finals, Snagging.
-        </p>
+        <p>Examples: Doors, Skirting, Kitchens, Finals, Snagging.</p>
 
-        <div style={{ display: "grid", gap: 12, maxWidth: 600 }}>
+        <div style={{ display: "grid", gap: 12, maxWidth: 650 }}>
           <select
             value={selectedSiteId}
             onChange={(e) => setSelectedSiteId(e.target.value)}
@@ -308,6 +467,7 @@ export default function SiteAdminPage() {
               <th className="no-print">Action</th>
             </tr>
           </thead>
+
           <tbody>
             {workTypes.map((type) => {
               const linkedSite = sites.find((s) => s.id === type.site_id);
@@ -315,6 +475,7 @@ export default function SiteAdminPage() {
               return (
                 <tr key={type.id}>
                   <td>{type.trade_name}</td>
+
                   <td>
                     <span
                       style={{
@@ -327,7 +488,9 @@ export default function SiteAdminPage() {
                       }}
                     />
                   </td>
+
                   <td>{linkedSite?.site_name || "-"}</td>
+
                   <td className="no-print">
                     <button
                       className="danger-button"
@@ -343,55 +506,6 @@ export default function SiteAdminPage() {
             {workTypes.length === 0 && (
               <tr>
                 <td colSpan={4}>No work types added yet.</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="card">
-        <h2>Staff Permissions</h2>
-        <p>
-          Use Owner or Manager for Cory/admin users. Use Staff for joiners who
-          only need to view or update their work.
-        </p>
-
-        <table>
-          <thead>
-            <tr>
-              <th>User ID</th>
-              <th>Current Role</th>
-              <th>Change Role</th>
-            </tr>
-          </thead>
-          <tbody>
-            {staff.map((member) => (
-              <tr key={member.id}>
-                <td>{member.id}</td>
-                <td>
-                  <span className="badge">{member.role}</span>
-                </td>
-                <td>
-                  <select
-                    value={member.role}
-                    onChange={(e) =>
-                      updateStaffRole(member.id, e.target.value)
-                    }
-                  >
-                    <option value="owner">Owner</option>
-                    <option value="manager">Manager</option>
-                    <option value="staff">Staff</option>
-                  </select>
-                </td>
-              </tr>
-            ))}
-
-            {staff.length === 0 && (
-              <tr>
-                <td colSpan={3}>
-                  No staff profiles found yet. They will appear here once they
-                  sign up.
-                </td>
               </tr>
             )}
           </tbody>
