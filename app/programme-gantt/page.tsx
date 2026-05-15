@@ -1,632 +1,146 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { DndContext, DragEndEvent, useDraggable } from "@dnd-kit/core";
 import { supabase } from "../../lib/supabase";
 
-type Site = { id: string; site_name: string };
-type Plot = { id: string; plot_number: string; plot_name: string | null };
-type Trade = { id: string; trade_name: string; colour: string };
-type TaskTemplate = { id: string; task_name: string };
-
-type ProgrammeTemplateItem = {
+type Staff = {
   id: string;
-  sequence_order: number;
-  task_name: string;
-  trade: string | null;
-  duration_working_days: number;
-  gap_working_days: number;
-  exclude_weekends: boolean;
+  full_name: string | null;
+  role: string;
 };
 
 type Task = {
   id: string;
   plot_number: string | null;
-  task_name: string | null;
+  task_name: string;
   trade: string | null;
   start_date: string | null;
   end_date: string | null;
   status: string | null;
+  assigned_staff: string | null;
+  work_address: string | null;
 };
 
-type Scale = "daily" | "weekly";
+const DAY_WIDTH = 76;
+const STAFF_COL_WIDTH = 230;
 
-function daysBetween(a: Date, b: Date) {
-  return Math.round((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24));
+function addDays(date: Date, days: number) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return d;
 }
 
-function addCalendarDays(dateString: string, days: number) {
-  const date = new Date(dateString);
-  date.setDate(date.getDate() + days);
+function formatDateInput(date: Date) {
   return date.toISOString().split("T")[0];
 }
 
-function addWorkingDays(dateString: string, days: number) {
-  const date = new Date(dateString);
-  let added = 0;
-
-  while (added < days) {
-    date.setDate(date.getDate() + 1);
-    const day = date.getDay();
-    if (day !== 0 && day !== 6) added++;
-  }
-
-  return date.toISOString().split("T")[0];
-}
-
-function calculateEndDate(start: string, duration: number, excludeWeekends: boolean) {
-  if (duration <= 1) return start;
-  return excludeWeekends
-    ? addWorkingDays(start, duration - 1)
-    : addCalendarDays(start, duration - 1);
-}
-
-function calculateNextStartDate(end: string, gap: number, excludeWeekends: boolean) {
-  return excludeWeekends
-    ? addWorkingDays(end, gap + 1)
-    : addCalendarDays(end, gap + 1);
-}
-
-function formatDate(date: Date) {
-  return date.toLocaleDateString("en-GB", {
-    day: "2-digit",
-    month: "short"
-  });
-}
-
-function startOfWeek(date: Date) {
-  const newDate = new Date(date);
-  const day = newDate.getDay();
-  const diff = newDate.getDate() - day + (day === 0 ? -6 : 1);
-  newDate.setDate(diff);
-  return newDate;
-}
-
-function DraggableTaskBar({
-  task,
-  left,
-  width,
-  colour,
-  canEdit,
-  onResizeStart,
-  onDelete,
-  onSelect
-}: {
-  task: Task;
-  left: number;
-  width: number;
-  colour: string;
-  canEdit: boolean;
-  onResizeStart: (task: Task, event: React.PointerEvent<HTMLDivElement>) => void;
-  onDelete: (task: Task) => void;
-  onSelect: (task: Task) => void;
-}) {
-  const { attributes, listeners, setNodeRef, transform } = useDraggable({
-    id: task.id,
-    disabled: !canEdit
-  });
-
-  return (
-    <div
-      ref={setNodeRef}
-      className="gantt-bar"
-      style={{
-        left: `${left}%`,
-        width: `${width}%`,
-        background: colour,
-        cursor: canEdit ? "grab" : "pointer",
-        transform: transform ? `translate3d(${transform.x}px, 0, 0)` : undefined
-      }}
-      onDoubleClickCapture={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        onSelect(task);
-      }}
-      {...listeners}
-      {...attributes}
-    >
-      <span className="gantt-bar-text">
-        {task.trade} - {task.task_name}
-      </span>
-
-      {canEdit && (
-        <>
-          <button
-            type="button"
-            className="gantt-delete-button"
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              onDelete(task);
-            }}
-          >
-            ×
-          </button>
-
-          <div
-            className="gantt-resize-handle"
-            onPointerDown={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              onResizeStart(task, event);
-            }}
-          />
-        </>
-      )}
-    </div>
+function daysBetween(start: string, end: string) {
+  const a = new Date(start);
+  const b = new Date(end);
+  return Math.max(
+    1,
+    Math.round((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24)) + 1
   );
 }
 
-export default function ProgrammeGantt() {
-  const [role, setRole] = useState("");
-  const [userTrade, setUserTrade] = useState("");
+function initials(name: string) {
+  return name
+    .split(" ")
+    .map((x) => x[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+}
 
-  const [sites, setSites] = useState<Site[]>([]);
-  const [plots, setPlots] = useState<Plot[]>([]);
-  const [trades, setTrades] = useState<Trade[]>([]);
-  const [taskTemplates, setTaskTemplates] = useState<TaskTemplate[]>([]);
-  const [programmeTemplateItems, setProgrammeTemplateItems] = useState<ProgrammeTemplateItem[]>([]);
+function taskColour(type: string | null) {
+  const value = (type || "").toLowerCase();
+
+  if (value.includes("kitchen")) return "#8b1230";
+  if (value.includes("door")) return "#005cc8";
+  if (value.includes("1st")) return "#f28c00";
+  if (value.includes("skirting")) return "#078f8f";
+  if (value.includes("snag")) return "#62a83f";
+  if (value.includes("final")) return "#8f3fb8";
+
+  return "#78212e";
+}
+
+export default function ProgrammeGanttPage() {
+  const [staff, setStaff] = useState<Staff[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
-
-  const [selectedSite, setSelectedSite] = useState("");
   const [message, setMessage] = useState("");
-  const [scale, setScale] = useState<Scale>("daily");
+  const [startDate, setStartDate] = useState(formatDateInput(new Date()));
+  const [rangeDays, setRangeDays] = useState(21);
 
-  const [plotNumber, setPlotNumber] = useState("");
-  const [taskName, setTaskName] = useState("");
-  const [trade, setTrade] = useState("");
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
-  const [status, setStatus] = useState("Planned");
+  useEffect(() => {
+    loadData();
+  }, []);
 
-  const [templatePlotNumber, setTemplatePlotNumber] = useState("");
-  const [templateStartDate, setTemplateStartDate] = useState("");
+  async function loadData() {
+    setMessage("Loading planner...");
 
-  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
-  const [editPlotNumber, setEditPlotNumber] = useState("");
-  const [editTaskName, setEditTaskName] = useState("");
-  const [editTrade, setEditTrade] = useState("");
-  const [editStartDate, setEditStartDate] = useState("");
-  const [editEndDate, setEditEndDate] = useState("");
-  const [editStatus, setEditStatus] = useState("Planned");
-
-  const canEdit = role === "site_manager" || role === "contracts_manager";
-
-  async function loadRole() {
-    const { data: userData } = await supabase.auth.getUser();
-
-    if (!userData?.user) {
-      setMessage("Not logged in.");
-      return;
-    }
-
-    const { data } = await supabase
+    const { data: staffData } = await supabase
       .from("profiles")
-      .select("role, trade")
-      .eq("id", userData.user.id)
-      .single();
+      .select("id, full_name, role")
+      .order("full_name", { ascending: true });
 
-    setRole(data?.role || "");
-    setUserTrade(data?.trade || "");
-  }
-
-  async function loadSites() {
-    const { data } = await supabase
-      .from("sites")
-      .select("id, site_name")
-      .order("created_at", { ascending: false });
-
-    setSites(data || []);
-
-    if (data && data.length > 0) {
-      setSelectedSite(data[0].id);
-      loadSiteData(data[0].id);
-    }
-  }
-
-  async function loadSiteData(siteId: string) {
-    await Promise.all([
-      loadPlots(siteId),
-      loadTrades(siteId),
-      loadTaskTemplates(siteId),
-      loadProgrammeTemplateItems(siteId),
-      loadTasks(siteId)
-    ]);
-  }
-
-  async function loadPlots(siteId: string) {
-    const { data } = await supabase
-      .from("plots")
-      .select("*")
-      .eq("site_id", siteId)
-      .order("plot_number", { ascending: true });
-
-    setPlots(data || []);
-
-    if (data && data.length > 0) {
-      setPlotNumber(data[0].plot_number);
-      setTemplatePlotNumber(data[0].plot_number);
-    }
-  }
-
-  async function loadTrades(siteId: string) {
-    const { data } = await supabase
-      .from("trades")
-      .select("*")
-      .eq("site_id", siteId)
-      .order("trade_name", { ascending: true });
-
-    setTrades(data || []);
-
-    if (data && data.length > 0) {
-      setTrade(data[0].trade_name);
-    }
-  }
-
-  async function loadTaskTemplates(siteId: string) {
-    const { data } = await supabase
-      .from("task_templates")
-      .select("*")
-      .eq("site_id", siteId)
-      .order("task_name", { ascending: true });
-
-    setTaskTemplates(data || []);
-
-    if (data && data.length > 0) {
-      setTaskName(data[0].task_name);
-    }
-  }
-
-  async function loadProgrammeTemplateItems(siteId: string) {
-    const { data } = await supabase
-      .from("programme_template_items")
-      .select("*")
-      .eq("site_id", siteId)
-      .order("sequence_order", { ascending: true });
-
-    setProgrammeTemplateItems(data || []);
-  }
-
-  async function loadTasks(siteId: string) {
-    const { data } = await supabase
+    const { data: taskData, error } = await supabase
       .from("programme_tasks")
       .select("*")
-      .eq("site_id", siteId)
-      .order("plot_number", { ascending: true });
-
-    setTasks(data || []);
-  }
-
-  function getTradeColour(tradeName: string | null) {
-    const found = trades.find((item) => item.trade_name === tradeName);
-    return found?.colour || "#1368b3";
-  }
-
-  async function addTask() {
-    if (!canEdit) return setMessage("No permission.");
-
-    if (!selectedSite || !plotNumber || !taskName || !trade || !startDate || !endDate) {
-      setMessage("Enter plot, task, trade, start date and end date.");
-      return;
-    }
-
-    const { error } = await supabase.from("programme_tasks").insert({
-      site_id: selectedSite,
-      plot_number: plotNumber,
-      task_name: taskName,
-      trade,
-      start_date: startDate,
-      end_date: endDate,
-      status
-    });
+      .order("start_date", { ascending: true });
 
     if (error) {
-      setMessage("Add task error: " + error.message);
+      setMessage("Planner error: " + error.message);
       return;
     }
 
-    setStartDate("");
-    setEndDate("");
-    setStatus("Planned");
-    setMessage("Task added");
-    loadTasks(selectedSite);
+    setStaff(staffData || []);
+    setTasks(taskData || []);
+    setMessage("");
   }
 
-  async function applyTemplateToPlot() {
-    if (!canEdit) return setMessage("No permission.");
+  const dates = useMemo(() => {
+    const base = new Date(startDate);
+    return Array.from({ length: rangeDays }, (_, i) => addDays(base, i));
+  }, [startDate, rangeDays]);
 
-    if (!selectedSite || !templatePlotNumber || !templateStartDate) {
-      setMessage("Select plot and start date.");
-      return;
-    }
+  function previous() {
+    setStartDate(formatDateInput(addDays(new Date(startDate), -7)));
+  }
 
-    if (programmeTemplateItems.length === 0) {
-      setMessage("No programme template items.");
-      return;
-    }
+  function next() {
+    setStartDate(formatDateInput(addDays(new Date(startDate), 7)));
+  }
 
-    const confirmed = window.confirm(`Apply template to Plot ${templatePlotNumber}?`);
+  function today() {
+    setStartDate(formatDateInput(new Date()));
+  }
+
+  async function deleteTask(id: string) {
+    const confirmed = confirm("Delete this booked work?");
     if (!confirmed) return;
 
-    let currentStartDate = templateStartDate;
-
-    const tasksToInsert = [...programmeTemplateItems]
-      .sort((a, b) => a.sequence_order - b.sequence_order)
-      .map((item) => {
-        const start = currentStartDate;
-
-        const end = calculateEndDate(
-          start,
-          item.duration_working_days,
-          item.exclude_weekends
-        );
-
-        currentStartDate = calculateNextStartDate(
-          end,
-          item.gap_working_days,
-          item.exclude_weekends
-        );
-
-        return {
-          site_id: selectedSite,
-          plot_number: templatePlotNumber,
-          task_name: item.task_name,
-          trade: item.trade,
-          start_date: start,
-          end_date: end,
-          status: "Planned"
-        };
-      });
-
-    const { error } = await supabase.from("programme_tasks").insert(tasksToInsert);
-
-    if (error) {
-      setMessage("Template error: " + error.message);
-      return;
-    }
-
-    setTemplateStartDate("");
-    setMessage("Template applied successfully");
-    loadTasks(selectedSite);
-  }
-
-  function selectTask(task: Task) {
-    setSelectedTask(task);
-    setEditPlotNumber(task.plot_number || "");
-    setEditTaskName(task.task_name || "");
-    setEditTrade(task.trade || "");
-    setEditStartDate(task.start_date || "");
-    setEditEndDate(task.end_date || "");
-    setEditStatus(task.status || "Planned");
-    setMessage(`Editing Plot ${task.plot_number} - ${task.task_name}`);
-  }
-
-  async function moveFollowingTasks(
-    plot: string | null,
-    fromDate: string,
-    movedDays: number,
-    excludingTaskId: string
-  ) {
-    if (!plot || movedDays === 0) return;
-
-    const followingTasks = tasks.filter(
-      (task) =>
-        task.id !== excludingTaskId &&
-        task.plot_number === plot &&
-        task.start_date &&
-        task.end_date &&
-        new Date(task.start_date) > new Date(fromDate)
-    );
-
-    if (followingTasks.length === 0) return;
-
-    const confirmed = window.confirm(
-      `Move ${followingTasks.length} following task(s) on Plot ${plot} by ${movedDays} day(s) as well?`
-    );
-
-    if (!confirmed) return;
-
-    await Promise.all(
-      followingTasks.map((task) =>
-        supabase
-          .from("programme_tasks")
-          .update({
-            start_date: addCalendarDays(task.start_date as string, movedDays),
-            end_date: addCalendarDays(task.end_date as string, movedDays)
-          })
-          .eq("id", task.id)
-      )
-    );
-  }
-
-  async function saveTaskChanges() {
-    if (!selectedTask || !canEdit) return;
-
-    if (!editPlotNumber || !editTaskName || !editTrade || !editStartDate || !editEndDate) {
-      setMessage("Enter plot, task, trade, start date and end date.");
-      return;
-    }
-
-    if (new Date(editEndDate) < new Date(editStartDate)) {
-      setMessage("End date cannot be before start date.");
-      return;
-    }
-
-    const movedDays =
-      selectedTask.start_date && editStartDate
-        ? daysBetween(new Date(selectedTask.start_date), new Date(editStartDate))
-        : 0;
-
-    const oldStartDate = selectedTask.start_date || editStartDate;
-
-    const { error } = await supabase
-      .from("programme_tasks")
-      .update({
-        plot_number: editPlotNumber,
-        task_name: editTaskName,
-        trade: editTrade,
-        start_date: editStartDate,
-        end_date: editEndDate,
-        status: editStatus
-      })
-      .eq("id", selectedTask.id);
-
-    if (error) {
-      setMessage("Save error: " + error.message);
-      return;
-    }
-
-    if (movedDays !== 0) {
-      await moveFollowingTasks(
-        selectedTask.plot_number,
-        oldStartDate,
-        movedDays,
-        selectedTask.id
-      );
-    }
-
-    setSelectedTask(null);
-    setMessage("Task updated");
-    loadTasks(selectedSite);
-  }
-
-  async function deleteTask(task: Task) {
-    if (!canEdit) return;
-
-    const confirmed = window.confirm(
-      `Delete task "${task.task_name}" from Plot ${task.plot_number}?`
-    );
-
-    if (!confirmed) return;
-
-    const { error } = await supabase
-      .from("programme_tasks")
-      .delete()
-      .eq("id", task.id);
+    const { error } = await supabase.from("programme_tasks").delete().eq("id", id);
 
     if (error) {
       setMessage("Delete error: " + error.message);
       return;
     }
 
-    setSelectedTask(null);
-    setMessage("Task deleted");
-    loadTasks(selectedSite);
+    loadData();
   }
 
-  function handleSiteChange(siteId: string) {
-    setSelectedSite(siteId);
-    setSelectedTask(null);
-    loadSiteData(siteId);
-  }
+  async function updateTaskDates(task: Task, newStartDate: string) {
+    if (!task.start_date || !task.end_date) return;
 
-  useEffect(() => {
-    loadRole();
-    loadSites();
-  }, []);
-
-  const visibleTasks =
-    role === "subcontractor" && userTrade
-      ? tasks.filter((task) => task.trade === userTrade)
-      : tasks;
-
-  const datedTasks = visibleTasks.filter((task) => task.start_date && task.end_date);
-
-  const range = useMemo(() => {
-    if (datedTasks.length === 0) {
-      return { start: new Date(), end: new Date(), days: 1 };
-    }
-
-    const starts = datedTasks.map((task) => new Date(task.start_date as string));
-    const ends = datedTasks.map((task) => new Date(task.end_date as string));
-
-    let start = new Date(Math.min(...starts.map((date) => date.getTime())));
-    let end = new Date(Math.max(...ends.map((date) => date.getTime())));
-
-    if (scale === "weekly") {
-      start = startOfWeek(start);
-      const endWeek = startOfWeek(end);
-      endWeek.setDate(endWeek.getDate() + 6);
-      end = endWeek;
-    }
-
-    return { start, end, days: Math.max(1, daysBetween(start, end) + 1) };
-  }, [datedTasks, scale]);
-
-  const dateColumns = useMemo(() => {
-    const dates = [];
-
-    if (scale === "weekly") {
-      const weeks = Math.ceil(range.days / 7);
-
-      for (let i = 0; i < weeks; i++) {
-        const date = new Date(range.start);
-        date.setDate(range.start.getDate() + i * 7);
-        dates.push(date);
-      }
-
-      return dates;
-    }
-
-    for (let i = 0; i < range.days; i++) {
-      const date = new Date(range.start);
-      date.setDate(range.start.getDate() + i);
-      dates.push(date);
-    }
-
-    return dates;
-  }, [range, scale]);
-
-  const columnCount = scale === "weekly" ? Math.ceil(range.days / 7) : range.days;
-
-  const plotRows = useMemo(() => {
-    const plotNumbers = new Set<string>();
-
-    plots.forEach((plot) => plotNumbers.add(plot.plot_number));
-
-    datedTasks.forEach((task) => {
-      if (task.plot_number) plotNumbers.add(task.plot_number);
-    });
-
-    return Array.from(plotNumbers).sort((a, b) =>
-      a.localeCompare(b, undefined, { numeric: true })
-    );
-  }, [plots, datedTasks]);
-
-  function tasksForPlot(plot: string) {
-    return datedTasks.filter((task) => task.plot_number === plot);
-  }
-
-  async function handleDragEnd(event: DragEndEvent) {
-    if (!canEdit) return;
-
-    const taskId = String(event.active.id);
-    const task = tasks.find((item) => item.id === taskId);
-
-    if (!task || !task.start_date || !task.end_date) return;
-
-    const ganttWidth = document
-      .querySelector(".gantt-track")
-      ?.getBoundingClientRect().width;
-
-    if (!ganttWidth) return;
-
-    const pixelsPerDay = ganttWidth / range.days;
-    const movedDays = Math.round(event.delta.x / pixelsPerDay);
-
-    if (movedDays === 0) return;
-
-    const newStartDate = addCalendarDays(task.start_date, movedDays);
-    const newEndDate = addCalendarDays(task.end_date, movedDays);
-
-    const oldStartDate = task.start_date;
+    const duration = daysBetween(task.start_date, task.end_date);
+    const newEndDate = formatDateInput(addDays(new Date(newStartDate), duration - 1));
 
     const { error } = await supabase
       .from("programme_tasks")
       .update({
         start_date: newStartDate,
-        end_date: newEndDate
+        end_date: newEndDate,
       })
       .eq("id", task.id);
 
@@ -635,321 +149,214 @@ export default function ProgrammeGantt() {
       return;
     }
 
-    await moveFollowingTasks(task.plot_number, oldStartDate, movedDays, task.id);
-
-    setSelectedTask(null);
-    setMessage("Task moved and saved");
-    loadTasks(selectedSite);
+    loadData();
   }
 
-  function handleResizeStart(task: Task, event: React.PointerEvent<HTMLDivElement>) {
-    if (!canEdit || !task.start_date || !task.end_date) return;
-
-    event.preventDefault();
-    event.stopPropagation();
-
-    const startX = event.clientX;
-    const originalEndDate = task.end_date;
-
-    const ganttWidth = document
-      .querySelector(".gantt-track")
-      ?.getBoundingClientRect().width;
-
-    if (!ganttWidth) return;
-
-    const pixelsPerDay = ganttWidth / range.days;
-
-    function onPointerMove(moveEvent: PointerEvent) {
-      const changedDays = Math.round((moveEvent.clientX - startX) / pixelsPerDay);
-      const proposedEndDate = addCalendarDays(originalEndDate, changedDays);
-
-      if (new Date(proposedEndDate) < new Date(task.start_date as string)) return;
-
-      setTasks((current) =>
-        current.map((item) =>
-          item.id === task.id ? { ...item, end_date: proposedEndDate } : item
-        )
-      );
-    }
-
-    async function onPointerUp(upEvent: PointerEvent) {
-      document.removeEventListener("pointermove", onPointerMove);
-      document.removeEventListener("pointerup", onPointerUp);
-
-      const changedDays = Math.round((upEvent.clientX - startX) / pixelsPerDay);
-
-      if (changedDays === 0) return;
-
-      const finalEndDate = addCalendarDays(originalEndDate, changedDays);
-
-      if (new Date(finalEndDate) < new Date(task.start_date as string)) {
-        setMessage("End date cannot be before start date");
-        loadTasks(selectedSite);
-        return;
-      }
-
-      const { error } = await supabase
-        .from("programme_tasks")
-        .update({ end_date: finalEndDate })
-        .eq("id", task.id);
-
-      if (error) {
-        setMessage("Resize error: " + error.message);
-        loadTasks(selectedSite);
-        return;
-      }
-
-      setSelectedTask(null);
-      setMessage("Task duration updated");
-      loadTasks(selectedSite);
-    }
-
-    document.addEventListener("pointermove", onPointerMove);
-    document.addEventListener("pointerup", onPointerUp);
-  }
+  const unassignedTasks = tasks.filter((task) => !task.assigned_staff);
 
   return (
     <main>
-      <h1>Gantt Programme View</h1>
+      <div className="planner-topbar">
+        <div>
+          <h1>Programme Planner</h1>
+          <p>Staff work planner for CJ Joinery.</p>
+        </div>
 
-      <div className="status-box">
-        Status: {message}
-        <br />
-        Role: {role || "Loading..."}
-        {role === "subcontractor" ? ` | Trade: ${userTrade || "Not set"}` : ""}
-        <br />
-        Editing Enabled: {canEdit ? "Yes" : "No"}
-      </div>
-
-      <div className="card no-print">
-        <h2>Controls</h2>
-
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <select value={selectedSite} onChange={(event) => handleSiteChange(event.target.value)}>
-            {sites.map((site) => (
-              <option key={site.id} value={site.id}>
-                {site.site_name}
-              </option>
-            ))}
-          </select>
-
-          <select value={scale} onChange={(event) => setScale(event.target.value as Scale)}>
-            <option value="daily">Daily View</option>
-            <option value="weekly">Weekly View</option>
-          </select>
-
-          <a href="/site-admin">
-            <button type="button">Site Admin</button>
+        <div className="planner-actions">
+          <a href="/programme">
+            <button>+ Task</button>
           </a>
-
-          <button type="button" onClick={() => window.print()}>
-            Print Gantt
+          <button className="secondary-button" onClick={loadData}>
+            Refresh
           </button>
         </div>
       </div>
 
-      {canEdit && (
-        <div className="card no-print">
-          <h2>Add Individual Task</h2>
+      {message && <div className="status-box">{message}</div>}
 
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <select value={plotNumber} onChange={(event) => setPlotNumber(event.target.value)}>
-              <option value="">Select plot</option>
-              {plots.map((plot) => (
-                <option key={plot.id} value={plot.plot_number}>
-                  Plot {plot.plot_number}
-                  {plot.plot_name ? ` - ${plot.plot_name}` : ""}
-                </option>
-              ))}
-            </select>
-
-            <select value={taskName} onChange={(event) => setTaskName(event.target.value)}>
-              <option value="">Select task</option>
-              {taskTemplates.map((task) => (
-                <option key={task.id} value={task.task_name}>
-                  {task.task_name}
-                </option>
-              ))}
-            </select>
-
-            <select value={trade} onChange={(event) => setTrade(event.target.value)}>
-              <option value="">Select trade</option>
-              {trades.map((item) => (
-                <option key={item.id} value={item.trade_name}>
-                  {item.trade_name}
-                </option>
-              ))}
-            </select>
-
-            <input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
-            <input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
-
-            <select value={status} onChange={(event) => setStatus(event.target.value)}>
-              <option>Planned</option>
-              <option>In Progress</option>
-              <option>Complete</option>
-              <option>At Risk</option>
-              <option>Delayed</option>
-            </select>
-
-            <button type="button" onClick={addTask}>
-              Add Task
-            </button>
-          </div>
+      <div className="planner-card">
+        <div className="planner-tabs">
+          <button className="planner-tab">Daily View</button>
+          <button className="planner-tab">Weekly View</button>
+          <button className="planner-tab active">Overview</button>
         </div>
-      )}
 
-      {canEdit && (
-        <div className="card no-print">
-          <h2>Apply Template To Plot</h2>
-
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <select value={templatePlotNumber} onChange={(event) => setTemplatePlotNumber(event.target.value)}>
-              <option value="">Select plot</option>
-              {plots.map((plot) => (
-                <option key={plot.id} value={plot.plot_number}>
-                  Plot {plot.plot_number}
-                  {plot.plot_name ? ` - ${plot.plot_name}` : ""}
-                </option>
-              ))}
-            </select>
-
-            <input
-              type="date"
-              value={templateStartDate}
-              onChange={(event) => setTemplateStartDate(event.target.value)}
-            />
-
-            <button type="button" onClick={applyTemplateToPlot}>
-              Apply Template
-            </button>
+        <div className="planner-title-row">
+          <div>
+            <h2>Overview Planner</h2>
+            <p>
+              {dates[0].toLocaleDateString("en-GB", {
+                month: "short",
+                year: "numeric",
+              })}{" "}
+              -{" "}
+              {dates[dates.length - 1].toLocaleDateString("en-GB", {
+                month: "short",
+                year: "numeric",
+              })}
+            </p>
           </div>
-        </div>
-      )}
 
-      {selectedTask && canEdit && (
-        <div className="card no-print">
-          <h2>Edit Task</h2>
-
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <select value={editPlotNumber} onChange={(event) => setEditPlotNumber(event.target.value)}>
-              {plots.map((plot) => (
-                <option key={plot.id} value={plot.plot_number}>
-                  Plot {plot.plot_number}
-                  {plot.plot_name ? ` - ${plot.plot_name}` : ""}
-                </option>
-              ))}
-            </select>
-
-            <select value={editTaskName} onChange={(event) => setEditTaskName(event.target.value)}>
-              {taskTemplates.map((task) => (
-                <option key={task.id} value={task.task_name}>
-                  {task.task_name}
-                </option>
-              ))}
-            </select>
-
-            <select value={editTrade} onChange={(event) => setEditTrade(event.target.value)}>
-              {trades.map((item) => (
-                <option key={item.id} value={item.trade_name}>
-                  {item.trade_name}
-                </option>
-              ))}
-            </select>
-
-            <input type="date" value={editStartDate} onChange={(event) => setEditStartDate(event.target.value)} />
-            <input type="date" value={editEndDate} onChange={(event) => setEditEndDate(event.target.value)} />
-
-            <select value={editStatus} onChange={(event) => setEditStatus(event.target.value)}>
-              <option>Planned</option>
-              <option>In Progress</option>
-              <option>Complete</option>
-              <option>At Risk</option>
-              <option>Delayed</option>
-            </select>
-
-            <button type="button" onClick={saveTaskChanges}>
-              Save Changes
+          <div className="planner-toolbar">
+            <button className="secondary-button" onClick={previous}>
+              ‹ Previous
+            </button>
+            <button className="secondary-button" onClick={today}>
+              Today
+            </button>
+            <button className="secondary-button" onClick={next}>
+              Next ›
             </button>
 
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => {
-                setSelectedTask(null);
-                setMessage("Edit cancelled");
-              }}
+            <select
+              value={rangeDays}
+              onChange={(e) => setRangeDays(Number(e.target.value))}
             >
-              Cancel
-            </button>
-
-            <button type="button" className="danger-button" onClick={() => deleteTask(selectedTask)}>
-              Delete
-            </button>
+              <option value={14}>2 Weeks</option>
+              <option value={21}>3 Weeks</option>
+              <option value={35}>5 Weeks</option>
+            </select>
           </div>
         </div>
-      )}
 
-      <div className="card gantt-print-card">
-        <h2>Programme Timeline</h2>
+        <div className="staff-gantt-wrap">
+          <div
+            className="staff-gantt"
+            style={{
+              gridTemplateColumns: `${STAFF_COL_WIDTH}px repeat(${rangeDays}, ${DAY_WIDTH}px)`,
+            }}
+          >
+            <div className="staff-header-cell">Staff Member</div>
 
-        <DndContext onDragEnd={handleDragEnd}>
-          <div className="gantt-wrap">
-            <div className={scale === "weekly" ? "gantt gantt-weekly" : "gantt"}>
-              <div className="gantt-header-row">
-                <div className="gantt-label gantt-header-label">Plot</div>
+            {dates.map((date) => {
+              const isToday =
+                formatDateInput(date) === formatDateInput(new Date());
+              const isWeekend = date.getDay() === 0 || date.getDay() === 6;
 
+              return (
                 <div
-                  className="gantt-date-bar"
-                  style={{
-                    gridTemplateColumns: `repeat(${columnCount}, minmax(${
-                      scale === "weekly" ? "120px" : "70px"
-                    }, 1fr))`
-                  }}
+                  key={date.toISOString()}
+                  className={`date-header-cell ${isToday ? "today" : ""} ${
+                    isWeekend ? "weekend" : ""
+                  }`}
                 >
-                  {dateColumns.map((date, index) => (
-                    <div key={index} className="gantt-date-cell">
-                      {scale === "weekly" ? `W/C ${formatDate(date)}` : formatDate(date)}
-                    </div>
-                  ))}
+                  <strong>
+                    {date.toLocaleDateString("en-GB", { weekday: "short" })}
+                  </strong>
+                  <span>{date.getDate()}</span>
+                  <small>
+                    {date.toLocaleDateString("en-GB", { month: "short" })}
+                  </small>
+                  <em />
                 </div>
-              </div>
+              );
+            })}
 
-              {plotRows.map((plot) => (
-                <div className="gantt-row" key={plot}>
-                  <div className="gantt-label">Plot {plot}</div>
+            {staff.map((member) => {
+              const staffName = member.full_name || member.role || "Staff";
+              const memberTasks = tasks.filter(
+                (task) => task.assigned_staff === member.id
+              );
 
-                  <div
-                    className="gantt-track gantt-grid"
-                    style={{ backgroundSize: `${100 / columnCount}% 100%` }}
-                  >
-                    {tasksForPlot(plot).map((task) => {
-                      const start = new Date(task.start_date as string);
-                      const end = new Date(task.end_date as string);
-
-                      const offset = (daysBetween(range.start, start) / range.days) * 100;
-                      const width = Math.max(4, ((daysBetween(start, end) + 1) / range.days) * 100);
-
-                      return (
-                        <DraggableTaskBar
-                          key={task.id}
-                          task={task}
-                          left={offset}
-                          width={width}
-                          colour={getTradeColour(task.trade)}
-                          canEdit={canEdit}
-                          onResizeStart={handleResizeStart}
-                          onDelete={deleteTask}
-                          onSelect={selectTask}
-                        />
-                      );
-                    })}
+              return (
+                <div key={member.id} className="staff-row">
+                  <div className="staff-name-cell">
+                    <span className="avatar">{initials(staffName)}</span>
+                    <strong>{staffName}</strong>
                   </div>
+
+                  {dates.map((date) => {
+                    const dateString = formatDateInput(date);
+                    const isWeekend = date.getDay() === 0 || date.getDay() === 6;
+                    const isToday = dateString === formatDateInput(new Date());
+
+                    return (
+                      <div
+                        key={`${member.id}-${dateString}`}
+                        className={`planner-day-cell ${
+                          isWeekend ? "weekend" : ""
+                        } ${isToday ? "today-line" : ""}`}
+                      />
+                    );
+                  })}
+
+                  {memberTasks.map((task) => {
+                    if (!task.start_date || !task.end_date) return null;
+
+                    const startIndex = dates.findIndex(
+                      (d) => formatDateInput(d) === task.start_date
+                    );
+
+                    if (startIndex < 0) return null;
+
+                    const duration = daysBetween(task.start_date, task.end_date);
+                    const width = Math.max(duration * DAY_WIDTH - 12, 70);
+                    const left = STAFF_COL_WIDTH + startIndex * DAY_WIDTH + 6;
+
+                    return (
+                      <div
+                        key={task.id}
+                        className="staff-task-bar"
+                        draggable
+                        onDragEnd={(e) => {
+                          const grid = e.currentTarget.parentElement;
+                          if (!grid) return;
+
+                          const rect = grid.getBoundingClientRect();
+                          const x = e.clientX - rect.left - STAFF_COL_WIDTH;
+                          const dayIndex = Math.max(
+                            0,
+                            Math.min(rangeDays - 1, Math.floor(x / DAY_WIDTH))
+                          );
+
+                          updateTaskDates(task, formatDateInput(dates[dayIndex]));
+                        }}
+                        style={{
+                          left,
+                          width,
+                          background: taskColour(task.trade),
+                        }}
+                        title={`${task.plot_number || ""} ${task.task_name}`}
+                      >
+                        <span>
+                          {task.plot_number ? `${task.plot_number} - ` : ""}
+                          {task.task_name}
+                        </span>
+
+                        <button
+                          type="button"
+                          onClick={() => deleteTask(task.id)}
+                          title="Delete task"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
-              ))}
+              );
+            })}
+
+            <div className="unassigned-label">
+              <strong>Unassigned Line Items ({unassignedTasks.length})</strong>
+              <span>Click to assign to staff</span>
             </div>
+
+            <div
+              className="unassigned-row"
+              style={{ gridColumn: `2 / span ${rangeDays}` }}
+            />
           </div>
-        </DndContext>
+        </div>
+      </div>
+
+      <div className="planner-legend">
+        <span><b style={{ background: "#8b1230" }} />Kitchens</span>
+        <span><b style={{ background: "#005cc8" }} />Doors</span>
+        <span><b style={{ background: "#f28c00" }} />1st Fix</span>
+        <span><b style={{ background: "#078f8f" }} />Skirting</span>
+        <span><b style={{ background: "#62a83f" }} />Snagging</span>
+        <span><b style={{ background: "#8f3fb8" }} />Finals</span>
       </div>
     </main>
   );
