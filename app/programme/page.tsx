@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { DndContext, DragEndEvent, useDraggable } from "@dnd-kit/core";
+import { useEffect, useState } from "react";
 import { supabase } from "../../lib/supabase";
 
 type Site = {
@@ -9,642 +8,317 @@ type Site = {
   site_name: string;
 };
 
+type WorkType = {
+  id: string;
+  trade_name: string;
+  colour: string;
+};
+
+type Staff = {
+  id: string;
+  role: string;
+  trade: string | null;
+};
+
 type Task = {
   id: string;
+  site_id: string;
   plot_number: string | null;
-  task_name: string | null;
+  task_name: string;
   trade: string | null;
   start_date: string | null;
   end_date: string | null;
   status: string | null;
+  assigned_staff: string | null;
+  notes: string | null;
+  work_address: string | null;
 };
 
-function daysBetween(a: Date, b: Date) {
-  return Math.round((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24));
-}
-
-function addDays(dateString: string, days: number) {
-  const date = new Date(dateString);
-  date.setDate(date.getDate() + days);
-  return date.toISOString().split("T")[0];
-}
-
-function formatDate(date: Date) {
-  return date.toLocaleDateString("en-GB", {
-    day: "2-digit",
-    month: "short"
-  });
-}
-
-function getBarColour(status: string | null) {
-  switch (status) {
-    case "Complete":
-      return "#17803d";
-    case "In Progress":
-      return "#d99904";
-    case "Delayed":
-      return "#b31313";
-    case "At Risk":
-      return "#e56b00";
-    default:
-      return "#1368b3";
-  }
-}
-
-function DraggableTaskBar({
-  task,
-  left,
-  width,
-  canEdit,
-  onResizeStart,
-  onDelete
-}: {
-  task: Task;
-  left: number;
-  width: number;
-  canEdit: boolean;
-  onResizeStart: (
-    task: Task,
-    event: React.PointerEvent<HTMLDivElement>
-  ) => void;
-  onDelete: (task: Task) => void;
-}) {
-  const { attributes, listeners, setNodeRef, transform } = useDraggable({
-    id: task.id,
-    disabled: !canEdit
-  });
-
-  return (
-    <div
-      ref={setNodeRef}
-      className="gantt-bar"
-      style={{
-        left: `${left}%`,
-        width: `${width}%`,
-        background: getBarColour(task.status),
-        cursor: canEdit ? "grab" : "default",
-        transform: transform
-          ? `translate3d(${transform.x}px, 0, 0)`
-          : undefined
-      }}
-      title={`${task.trade} - ${task.task_name}`}
-      {...listeners}
-      {...attributes}
-    >
-      <span className="gantt-bar-text">
-        {task.trade} - {task.task_name}
-      </span>
-
-      {canEdit && (
-        <>
-          <button
-            type="button"
-            className="gantt-delete-button"
-            onPointerDown={(event) => {
-              event.stopPropagation();
-            }}
-            onClick={(event) => {
-              event.stopPropagation();
-              onDelete(task);
-            }}
-            title="Delete task"
-          >
-            ×
-          </button>
-
-          <div
-            className="gantt-resize-handle"
-            onPointerDown={(event) => {
-              event.stopPropagation();
-              onResizeStart(task, event);
-            }}
-            title="Resize duration"
-          />
-        </>
-      )}
-    </div>
-  );
-}
-
-export default function ProgrammeGantt() {
-  const [role, setRole] = useState("");
-  const [userTrade, setUserTrade] = useState("");
+export default function ProgrammePage() {
   const [sites, setSites] = useState<Site[]>([]);
+  const [workTypes, setWorkTypes] = useState<WorkType[]>([]);
+  const [staff, setStaff] = useState<Staff[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [selectedSite, setSelectedSite] = useState("");
-  const [message, setMessage] = useState("");
 
-  const [plotNumber, setPlotNumber] = useState("");
+  const [siteId, setSiteId] = useState("");
+  const [jobRef, setJobRef] = useState("");
   const [taskName, setTaskName] = useState("");
-  const [trade, setTrade] = useState("Electrical");
+  const [workType, setWorkType] = useState("");
+  const [assignedStaff, setAssignedStaff] = useState("");
+  const [workAddress, setWorkAddress] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
-  const [status, setStatus] = useState("Planned");
+  const [status, setStatus] = useState("Booked");
+  const [notes, setNotes] = useState("");
 
-  const canEdit = role === "site_manager" || role === "contracts_manager";
+  const [message, setMessage] = useState("");
 
-  async function loadRole() {
-    const { data: userData } = await supabase.auth.getUser();
+  useEffect(() => {
+    loadData();
+  }, []);
 
-    if (!userData?.user) {
-      setMessage("Not logged in. Please login first.");
-      return;
-    }
-
-    const { data } = await supabase
-      .from("profiles")
-      .select("role, trade")
-      .eq("id", userData.user.id)
-      .single();
-
-    setRole(data?.role || "");
-    setUserTrade(data?.trade || "");
-  }
-
-  async function loadSites() {
-    const { data } = await supabase
+  async function loadData() {
+    const { data: siteData } = await supabase
       .from("sites")
       .select("id, site_name")
-      .order("created_at", { ascending: false });
+      .order("site_name");
 
-    setSites(data || []);
+    const { data: workTypeData } = await supabase
+      .from("trades")
+      .select("id, trade_name, colour")
+      .order("trade_name");
 
-    if (data && data.length > 0 && !selectedSite) {
-      setSelectedSite(data[0].id);
-      loadTasks(data[0].id);
-    }
-  }
+    const { data: staffData } = await supabase
+      .from("profiles")
+      .select("id, role, trade")
+      .order("role");
 
-  async function loadTasks(siteId: string) {
-    setMessage("Loading Gantt view...");
-
-    const { data, error } = await supabase
+    const { data: taskData } = await supabase
       .from("programme_tasks")
       .select("*")
-      .eq("site_id", siteId)
-      .order("plot_number", { ascending: true });
+      .order("start_date", { ascending: true });
 
-    if (error) {
-      setMessage("Load error: " + error.message);
-      return;
+    setSites(siteData || []);
+    setWorkTypes(workTypeData || []);
+    setStaff(staffData || []);
+    setTasks(taskData || []);
+
+    if (!siteId && siteData && siteData.length > 0) {
+      setSiteId(siteData[0].id);
     }
-
-    setTasks(data || []);
-    setMessage("Gantt view loaded");
   }
 
   async function addTask() {
-    if (!canEdit) {
-      setMessage("You do not have permission to add tasks.");
+    setMessage("");
+
+    if (!siteId || !taskName || !startDate || !endDate) {
+      setMessage("Please complete job/site, task name, start date and end date.");
       return;
     }
-
-    if (!selectedSite) {
-      setMessage("Please select a site.");
-      return;
-    }
-
-    if (!plotNumber || !taskName || !startDate || !endDate) {
-      setMessage("Enter plot, task, start date and end date.");
-      return;
-    }
-
-    setMessage("Adding task...");
 
     const { error } = await supabase.from("programme_tasks").insert({
-      site_id: selectedSite,
-      plot_number: plotNumber,
+      site_id: siteId,
+      plot_number: jobRef,
       task_name: taskName,
-      trade,
+      trade: workType,
+      assigned_staff: assignedStaff || null,
+      work_address: workAddress,
       start_date: startDate,
       end_date: endDate,
-      status
+      status,
+      notes,
     });
 
     if (error) {
-      setMessage("Add task error: " + error.message);
+      setMessage("Error adding work: " + error.message);
       return;
     }
 
-    setPlotNumber("");
+    setJobRef("");
     setTaskName("");
-    setTrade("Electrical");
+    setWorkType("");
+    setAssignedStaff("");
+    setWorkAddress("");
     setStartDate("");
     setEndDate("");
-    setStatus("Planned");
+    setStatus("Booked");
+    setNotes("");
 
-    setMessage("Task added");
-    loadTasks(selectedSite);
+    setMessage("Work booked successfully.");
+    loadData();
   }
 
-  async function deleteTask(task: Task) {
-    if (!canEdit) {
-      setMessage("You do not have permission to delete tasks.");
-      return;
-    }
-
-    const confirmed = window.confirm(
-      `Delete task "${task.task_name}" from Plot ${task.plot_number}?`
-    );
-
+  async function deleteTask(id: string) {
+    const confirmed = confirm("Delete this booked work?");
     if (!confirmed) return;
-
-    setMessage("Deleting task...");
 
     const { error } = await supabase
       .from("programme_tasks")
       .delete()
-      .eq("id", task.id);
+      .eq("id", id);
 
     if (error) {
       setMessage("Delete error: " + error.message);
       return;
     }
 
-    setTasks((current) => current.filter((item) => item.id !== task.id));
-    setMessage("Task deleted");
+    setMessage("Booked work deleted.");
+    loadData();
   }
 
-  function handleSiteChange(siteId: string) {
-    setSelectedSite(siteId);
-    loadTasks(siteId);
-  }
-
-  useEffect(() => {
-    loadRole();
-    loadSites();
-  }, []);
-
-  const visibleTasks =
-    role === "subcontractor" && userTrade
-      ? tasks.filter((task) => task.trade === userTrade)
-      : tasks;
-
-  const datedTasks = visibleTasks.filter(
-    (task) => task.start_date && task.end_date
-  );
-
-  const range = useMemo(() => {
-    if (datedTasks.length === 0) {
-      return {
-        start: new Date(),
-        end: new Date(),
-        days: 1
-      };
-    }
-
-    const starts = datedTasks.map((task) => new Date(task.start_date as string));
-    const ends = datedTasks.map((task) => new Date(task.end_date as string));
-
-    const start = new Date(Math.min(...starts.map((date) => date.getTime())));
-    const end = new Date(Math.max(...ends.map((date) => date.getTime())));
-
-    return {
-      start,
-      end,
-      days: Math.max(1, daysBetween(start, end) + 1)
-    };
-  }, [datedTasks]);
-
-  const dateColumns = useMemo(() => {
-    const dates = [];
-
-    for (let i = 0; i < range.days; i++) {
-      const date = new Date(range.start);
-      date.setDate(range.start.getDate() + i);
-      dates.push(date);
-    }
-
-    return dates;
-  }, [range]);
-
-  const tasksByPlot = useMemo(() => {
-    const grouped: Record<string, Task[]> = {};
-
-    datedTasks.forEach((task) => {
-      const plot = task.plot_number || "No Plot";
-
-      if (!grouped[plot]) {
-        grouped[plot] = [];
-      }
-
-      grouped[plot].push(task);
-    });
-
-    return Object.entries(grouped).sort(([a], [b]) =>
-      a.localeCompare(b, undefined, { numeric: true })
-    );
-  }, [datedTasks]);
-
-  async function handleDragEnd(event: DragEndEvent) {
-    if (!canEdit) return;
-
-    const taskId = String(event.active.id);
-    const task = tasks.find((item) => item.id === taskId);
-
-    if (!task || !task.start_date || !task.end_date) return;
-
-    const ganttWidth = document
-      .querySelector(".gantt-track")
-      ?.getBoundingClientRect().width;
-
-    if (!ganttWidth) return;
-
-    const pixelsPerDay = ganttWidth / range.days;
-    const movedDays = Math.round(event.delta.x / pixelsPerDay);
-
-    if (movedDays === 0) return;
-
-    const newStartDate = addDays(task.start_date, movedDays);
-    const newEndDate = addDays(task.end_date, movedDays);
-
-    setMessage(`Moving task by ${movedDays} day(s)...`);
-
+  async function updateStatus(id: string, newStatus: string) {
     const { error } = await supabase
       .from("programme_tasks")
-      .update({
-        start_date: newStartDate,
-        end_date: newEndDate
-      })
-      .eq("id", task.id);
+      .update({ status: newStatus })
+      .eq("id", id);
 
     if (error) {
-      setMessage("Move error: " + error.message);
+      setMessage("Status error: " + error.message);
       return;
     }
 
-    setTasks((current) =>
-      current.map((item) =>
-        item.id === task.id
-          ? {
-              ...item,
-              start_date: newStartDate,
-              end_date: newEndDate
-            }
-          : item
-      )
-    );
-
-    setMessage("Task moved and saved");
+    setMessage("Status updated.");
+    loadData();
   }
 
-  function handleResizeStart(
-    task: Task,
-    pointerDownEvent: React.PointerEvent<HTMLDivElement>
-  ) {
-    if (!canEdit || !task.start_date || !task.end_date) return;
-
-    pointerDownEvent.preventDefault();
-
-    const startX = pointerDownEvent.clientX;
-    const originalEndDate = task.end_date;
-
-    const ganttWidth = document
-      .querySelector(".gantt-track")
-      ?.getBoundingClientRect().width;
-
-    if (!ganttWidth) return;
-
-    const pixelsPerDay = ganttWidth / range.days;
-
-    function onPointerMove(moveEvent: PointerEvent) {
-      const deltaX = moveEvent.clientX - startX;
-      const changedDays = Math.round(deltaX / pixelsPerDay);
-
-      const proposedEndDate = addDays(originalEndDate, changedDays);
-
-      if (new Date(proposedEndDate) < new Date(task.start_date as string)) {
-        return;
-      }
-
-      setTasks((current) =>
-        current.map((item) =>
-          item.id === task.id
-            ? {
-                ...item,
-                end_date: proposedEndDate
-              }
-            : item
-        )
-      );
-    }
-
-    async function onPointerUp(upEvent: PointerEvent) {
-      document.removeEventListener("pointermove", onPointerMove);
-      document.removeEventListener("pointerup", onPointerUp);
-
-      const deltaX = upEvent.clientX - startX;
-      const changedDays = Math.round(deltaX / pixelsPerDay);
-
-      if (changedDays === 0) {
-        setMessage("Resize cancelled");
-        return;
-      }
-
-      const finalEndDate = addDays(originalEndDate, changedDays);
-
-      if (new Date(finalEndDate) < new Date(task.start_date as string)) {
-        setMessage("End date cannot be before start date");
-        loadTasks(selectedSite);
-        return;
-      }
-
-      setMessage(`Updating duration by ${changedDays} day(s)...`);
-
-      const { error } = await supabase
-        .from("programme_tasks")
-        .update({
-          end_date: finalEndDate
-        })
-        .eq("id", task.id);
-
-      if (error) {
-        setMessage("Resize error: " + error.message);
-        loadTasks(selectedSite);
-        return;
-      }
-
-      setMessage("Task duration updated");
-      loadTasks(selectedSite);
-    }
-
-    document.addEventListener("pointermove", onPointerMove);
-    document.addEventListener("pointerup", onPointerUp);
+  function staffName(id: string | null) {
+    if (!id) return "-";
+    const member = staff.find((s) => s.id === id);
+    return member ? `${member.role} - ${member.trade || "Joinery"}` : id;
   }
 
   return (
     <main>
-      <h1>Gantt Programme View</h1>
+      <h1>Book Work</h1>
+      <p>Book joinery tasks directly to staff members.</p>
 
-      <div className="status-box">
-        Status: {message}
-        <br />
-        Role: {role || "Loading..."}
-        {role === "subcontractor"
-          ? ` | Trade: ${userTrade || "Not set"}`
-          : ""}
-        <br />
-        Editing Enabled: {canEdit ? "Yes" : "No"}
-      </div>
-
-      <div className="card no-print">
-        <h2>Select Site</h2>
-
-        <select
-          value={selectedSite}
-          onChange={(event) => handleSiteChange(event.target.value)}
-        >
-          {sites.map((site) => (
-            <option key={site.id} value={site.id}>
-              {site.site_name}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {canEdit && (
-        <div className="card no-print">
-          <h2>Add Task</h2>
-
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <input
-              placeholder="Plot"
-              value={plotNumber}
-              onChange={(event) => setPlotNumber(event.target.value)}
-            />
-
-            <input
-              placeholder="Task"
-              value={taskName}
-              onChange={(event) => setTaskName(event.target.value)}
-            />
-
-            <select
-              value={trade}
-              onChange={(event) => setTrade(event.target.value)}
-            >
-              <option>Electrical</option>
-              <option>Plumbing</option>
-              <option>Drylining</option>
-              <option>Joinery</option>
-              <option>Brickwork</option>
-              <option>Roofing</option>
-              <option>Decorating</option>
-              <option>Groundworks</option>
-            </select>
-
-            <input
-              type="date"
-              value={startDate}
-              onChange={(event) => setStartDate(event.target.value)}
-            />
-
-            <input
-              type="date"
-              value={endDate}
-              onChange={(event) => setEndDate(event.target.value)}
-            />
-
-            <select
-              value={status}
-              onChange={(event) => setStatus(event.target.value)}
-            >
-              <option>Planned</option>
-              <option>In Progress</option>
-              <option>Complete</option>
-              <option>At Risk</option>
-              <option>Delayed</option>
-            </select>
-
-            <button type="button" onClick={addTask}>
-              Add Task
-            </button>
-          </div>
-        </div>
-      )}
+      {message && <div className="status-box">{message}</div>}
 
       <div className="card">
-        <h2>Programme Timeline</h2>
+        <h2>Add Booked Work</h2>
 
-        <p>
-          {range.start.toLocaleDateString("en-GB")} →{" "}
-          {range.end.toLocaleDateString("en-GB")}
-        </p>
+        <div style={{ display: "grid", gap: 12, maxWidth: 700 }}>
+          <select value={siteId} onChange={(e) => setSiteId(e.target.value)}>
+            <option value="">Select Job / Site</option>
+            {sites.map((site) => (
+              <option key={site.id} value={site.id}>
+                {site.site_name}
+              </option>
+            ))}
+          </select>
 
-        {canEdit ? (
-          <p>
-            Drag bars left/right to move tasks. Drag the right edge to change
-            duration. Click × to delete.
-          </p>
-        ) : (
-          <p>
-            View only. Subcontractors can suggest changes but cannot edit the
-            programme directly.
-          </p>
-        )}
+          <input
+            value={jobRef}
+            onChange={(e) => setJobRef(e.target.value)}
+            placeholder="Job ref / plot / address short name"
+          />
 
-        {datedTasks.length === 0 && <p>No dated tasks to show.</p>}
+          <input
+            value={taskName}
+            onChange={(e) => setTaskName(e.target.value)}
+            placeholder="Task name, e.g. Fit internal doors"
+          />
 
-        <DndContext onDragEnd={handleDragEnd}>
-          <div className="gantt-wrap">
-            <div className="gantt">
-              <div className="gantt-header-row">
-                <div className="gantt-label gantt-header-label">Plot</div>
+          <select value={workType} onChange={(e) => setWorkType(e.target.value)}>
+            <option value="">Select Work Type</option>
+            {workTypes.map((type) => (
+              <option key={type.id} value={type.trade_name}>
+                {type.trade_name}
+              </option>
+            ))}
+          </select>
 
-                <div
-                  className="gantt-date-bar"
-                  style={{
-                    gridTemplateColumns: `repeat(${range.days}, minmax(70px, 1fr))`
-                  }}
-                >
-                  {dateColumns.map((date, index) => (
-                    <div key={index} className="gantt-date-cell">
-                      {formatDate(date)}
-                    </div>
-                  ))}
-                </div>
-              </div>
+          <select
+            value={assignedStaff}
+            onChange={(e) => setAssignedStaff(e.target.value)}
+          >
+            <option value="">Assign Staff</option>
+            {staff.map((member) => (
+              <option key={member.id} value={member.id}>
+                {member.role} - {member.trade || "Joinery"}
+              </option>
+            ))}
+          </select>
 
-              {tasksByPlot.map(([plot, plotTasks]) => (
-                <div className="gantt-row" key={plot}>
-                  <div className="gantt-label">Plot {plot}</div>
+          <input
+            value={workAddress}
+            onChange={(e) => setWorkAddress(e.target.value)}
+            placeholder="Work address"
+          />
 
-                  <div
-                    className="gantt-track gantt-grid"
-                    style={{
-                      backgroundSize: `${100 / range.days}% 100%`
-                    }}
+          <label>Start Date</label>
+          <input
+            type="date"
+            value={startDate}
+            onChange={(e) => setStartDate(e.target.value)}
+          />
+
+          <label>End Date</label>
+          <input
+            type="date"
+            value={endDate}
+            onChange={(e) => setEndDate(e.target.value)}
+          />
+
+          <select value={status} onChange={(e) => setStatus(e.target.value)}>
+            <option value="Booked">Booked</option>
+            <option value="In Progress">In Progress</option>
+            <option value="Complete">Complete</option>
+            <option value="Snagging">Snagging</option>
+            <option value="On Hold">On Hold</option>
+          </select>
+
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Notes"
+            rows={4}
+          />
+
+          <button onClick={addTask}>Book Work</button>
+        </div>
+      </div>
+
+      <div className="card">
+        <h2>Booked Work</h2>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Job Ref</th>
+              <th>Task</th>
+              <th>Work Type</th>
+              <th>Staff</th>
+              <th>Dates</th>
+              <th>Status</th>
+              <th className="no-print">Action</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {tasks.map((task) => (
+              <tr key={task.id}>
+                <td>{task.plot_number || "-"}</td>
+                <td>
+                  <strong>{task.task_name}</strong>
+                  <br />
+                  <small>{task.work_address}</small>
+                </td>
+                <td>{task.trade || "-"}</td>
+                <td>{staffName(task.assigned_staff)}</td>
+                <td>
+                  {task.start_date} → {task.end_date}
+                </td>
+                <td>
+                  <select
+                    value={task.status || "Booked"}
+                    onChange={(e) => updateStatus(task.id, e.target.value)}
                   >
-                    {plotTasks.map((task) => {
-                      const start = new Date(task.start_date as string);
-                      const end = new Date(task.end_date as string);
+                    <option value="Booked">Booked</option>
+                    <option value="In Progress">In Progress</option>
+                    <option value="Complete">Complete</option>
+                    <option value="Snagging">Snagging</option>
+                    <option value="On Hold">On Hold</option>
+                  </select>
+                </td>
+                <td className="no-print">
+                  <button
+                    className="danger-button"
+                    onClick={() => deleteTask(task.id)}
+                  >
+                    Delete
+                  </button>
+                </td>
+              </tr>
+            ))}
 
-                      const offset =
-                        (daysBetween(range.start, start) / range.days) * 100;
-
-                      const width = Math.max(
-                        4,
-                        ((daysBetween(start, end) + 1) / range.days) * 100
-                      );
-
-                      return (
-                        <DraggableTaskBar
-                          key={task.id}
-                          task={task}
-                          left={offset}
-                          width={width}
-                          canEdit={canEdit}
-                          onResizeStart={handleResizeStart}
-                          onDelete={deleteTask}
-                        />
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </DndContext>
+            {tasks.length === 0 && (
+              <tr>
+                <td colSpan={7}>No work booked yet.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
     </main>
   );
