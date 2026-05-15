@@ -25,6 +25,9 @@ type StaffMember = {
 };
 
 export default function SiteAdminPage() {
+  const [role, setRole] = useState("");
+  const [checkingAccess, setCheckingAccess] = useState(true);
+
   const [sites, setSites] = useState<Site[]>([]);
   const [workTypes, setWorkTypes] = useState<WorkType[]>([]);
   const [staff, setStaff] = useState<StaffMember[]>([]);
@@ -45,8 +48,42 @@ export default function SiteAdminPage() {
   const [message, setMessage] = useState("");
 
   useEffect(() => {
-    loadAdminData();
+    checkAccess();
   }, []);
+
+  async function checkAccess() {
+    setCheckingAccess(true);
+
+    const { data: userData } = await supabase.auth.getUser();
+
+    if (!userData?.user) {
+      window.location.href = "/login";
+      return;
+    }
+
+    const { data: profile, error } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", userData.user.id)
+      .single();
+
+    if (error) {
+      setMessage("Profile access error: " + error.message);
+      setCheckingAccess(false);
+      return;
+    }
+
+    const userRole = profile?.role || "";
+    setRole(userRole);
+
+    if (userRole !== "owner" && userRole !== "manager") {
+      window.location.href = "/dashboard";
+      return;
+    }
+
+    await loadAdminData();
+    setCheckingAccess(false);
+  }
 
   async function loadAdminData() {
     const { data: siteData } = await supabase
@@ -201,10 +238,10 @@ export default function SiteAdminPage() {
     loadAdminData();
   }
 
-  async function updateStaffRole(id: string, role: string) {
+  async function updateStaffRole(id: string, newRole: string) {
     const { error } = await supabase
       .from("profiles")
-      .update({ role })
+      .update({ role: newRole })
       .eq("id", id);
 
     if (error) {
@@ -229,6 +266,27 @@ export default function SiteAdminPage() {
 
     setMessage("Staff name updated.");
     loadAdminData();
+  }
+
+  if (checkingAccess) {
+    return (
+      <main>
+        <div className="card">
+          <h2>Checking access...</h2>
+        </div>
+      </main>
+    );
+  }
+
+  if (role !== "owner" && role !== "manager") {
+    return (
+      <main>
+        <div className="card">
+          <h2>Restricted Access</h2>
+          <p>Only owners and managers can use this admin page.</p>
+        </div>
+      </main>
+    );
   }
 
   return (
@@ -319,18 +377,14 @@ export default function SiteAdminPage() {
                   <input
                     defaultValue={member.full_name || ""}
                     placeholder="Staff name"
-                    onBlur={(e) =>
-                      updateStaffName(member.id, e.target.value)
-                    }
+                    onBlur={(e) => updateStaffName(member.id, e.target.value)}
                   />
                 </td>
 
                 <td>
                   <select
                     value={member.role}
-                    onChange={(e) =>
-                      updateStaffRole(member.id, e.target.value)
-                    }
+                    onChange={(e) => updateStaffRole(member.id, e.target.value)}
                   >
                     <option value="owner">Owner</option>
                     <option value="manager">Manager</option>
