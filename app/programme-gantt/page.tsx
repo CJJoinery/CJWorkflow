@@ -23,6 +23,9 @@ type Task = {
 
 const DAY_WIDTH = 76;
 const STAFF_COL_WIDTH = 230;
+const HEADER_HEIGHT = 108;
+const ROW_HEIGHT = 92;
+const BAR_TOP_OFFSET = 24;
 
 function addDays(date: Date, days: number) {
   const d = new Date(date);
@@ -37,6 +40,7 @@ function formatDateInput(date: Date) {
 function daysBetween(start: string, end: string) {
   const a = new Date(start);
   const b = new Date(end);
+
   return Math.max(
     1,
     Math.round((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24)) + 1
@@ -120,7 +124,10 @@ export default function ProgrammeGanttPage() {
     const confirmed = confirm("Delete this booked work?");
     if (!confirmed) return;
 
-    const { error } = await supabase.from("programme_tasks").delete().eq("id", id);
+    const { error } = await supabase
+      .from("programme_tasks")
+      .delete()
+      .eq("id", id);
 
     if (error) {
       setMessage("Delete error: " + error.message);
@@ -134,7 +141,9 @@ export default function ProgrammeGanttPage() {
     if (!task.start_date || !task.end_date) return;
 
     const duration = daysBetween(task.start_date, task.end_date);
-    const newEndDate = formatDateInput(addDays(new Date(newStartDate), duration - 1));
+    const newEndDate = formatDateInput(
+      addDays(new Date(newStartDate), duration - 1)
+    );
 
     const { error } = await supabase
       .from("programme_tasks")
@@ -166,6 +175,7 @@ export default function ProgrammeGanttPage() {
           <a href="/programme">
             <button>+ Task</button>
           </a>
+
           <button className="secondary-button" onClick={loadData}>
             Refresh
           </button>
@@ -201,9 +211,11 @@ export default function ProgrammeGanttPage() {
             <button className="secondary-button" onClick={previous}>
               ‹ Previous
             </button>
+
             <button className="secondary-button" onClick={today}>
               Today
             </button>
+
             <button className="secondary-button" onClick={next}>
               Next ›
             </button>
@@ -231,6 +243,7 @@ export default function ProgrammeGanttPage() {
             {dates.map((date) => {
               const isToday =
                 formatDateInput(date) === formatDateInput(new Date());
+
               const isWeekend = date.getDay() === 0 || date.getDay() === 6;
 
               return (
@@ -243,17 +256,21 @@ export default function ProgrammeGanttPage() {
                   <strong>
                     {date.toLocaleDateString("en-GB", { weekday: "short" })}
                   </strong>
+
                   <span>{date.getDate()}</span>
+
                   <small>
                     {date.toLocaleDateString("en-GB", { month: "short" })}
                   </small>
+
                   <em />
                 </div>
               );
             })}
 
-            {staff.map((member) => {
+            {staff.map((member, staffIndex) => {
               const staffName = member.full_name || member.role || "Staff";
+
               const memberTasks = tasks.filter(
                 (task) => task.assigned_staff === member.id
               );
@@ -290,8 +307,13 @@ export default function ProgrammeGanttPage() {
                     if (startIndex < 0) return null;
 
                     const duration = daysBetween(task.start_date, task.end_date);
+
                     const width = Math.max(duration * DAY_WIDTH - 12, 70);
+
                     const left = STAFF_COL_WIDTH + startIndex * DAY_WIDTH + 6;
+
+                    const top =
+                      HEADER_HEIGHT + staffIndex * ROW_HEIGHT + BAR_TOP_OFFSET;
 
                     return (
                       <div
@@ -300,10 +322,13 @@ export default function ProgrammeGanttPage() {
                         draggable
                         onDragEnd={(e) => {
                           const grid = e.currentTarget.parentElement;
+
                           if (!grid) return;
 
                           const rect = grid.getBoundingClientRect();
+
                           const x = e.clientX - rect.left - STAFF_COL_WIDTH;
+
                           const dayIndex = Math.max(
                             0,
                             Math.min(rangeDays - 1, Math.floor(x / DAY_WIDTH))
@@ -313,6 +338,7 @@ export default function ProgrammeGanttPage() {
                         }}
                         style={{
                           left,
+                          top,
                           width,
                           background: taskColour(task.trade),
                         }}
@@ -351,12 +377,30 @@ export default function ProgrammeGanttPage() {
       </div>
 
       <div className="planner-legend">
-        <span><b style={{ background: "#8b1230" }} />Kitchens</span>
-        <span><b style={{ background: "#005cc8" }} />Doors</span>
-        <span><b style={{ background: "#f28c00" }} />1st Fix</span>
-        <span><b style={{ background: "#078f8f" }} />Skirting</span>
-        <span><b style={{ background: "#62a83f" }} />Snagging</span>
-        <span><b style={{ background: "#8f3fb8" }} />Finals</span>
+        <span>
+          <b style={{ background: "#8b1230" }} />
+          Kitchens
+        </span>
+        <span>
+          <b style={{ background: "#005cc8" }} />
+          Doors
+        </span>
+        <span>
+          <b style={{ background: "#f28c00" }} />
+          1st Fix
+        </span>
+        <span>
+          <b style={{ background: "#078f8f" }} />
+          Skirting
+        </span>
+        <span>
+          <b style={{ background: "#62a83f" }} />
+          Snagging
+        </span>
+        <span>
+          <b style={{ background: "#8f3fb8" }} />
+          Finals
+        </span>
       </div>
     </main>
   );
