@@ -1,1 +1,80 @@
-"use client";import{useState}from"react";import{supabase}from"../../lib/supabase";export default function Login(){const[email,setEmail]=useState("");const[message,setMessage]=useState("");async function login(){if(!email){setMessage("Enter your email");return}setMessage("Sending login link...");const{error}=await supabase.auth.signInWithOtp({email,options:{emailRedirectTo:window.location.origin+"/dashboard"}});if(error){setMessage(error.message);return}setMessage("Check your email for the login link.")}return <main><div className="card" style={{maxWidth:500}}><h1>Login</h1><p>Enter your email to access SiteProgrammePro.</p><div className="status-box">Status: {message}</div><input type="email" placeholder="Email address" value={email} onChange={e=>setEmail(e.target.value)} style={{width:"100%",marginBottom:12}}/><button onClick={login}>Send Login Link</button></div></main>}
+"use client";
+
+import { useState } from "react";
+import { supabase } from "../../lib/supabase";
+
+export default function LoginPage() {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
+  const [message, setMessage] = useState("");
+
+  async function login() {
+    setMessage("");
+
+    if (!email || !password) {
+      setMessage("Please enter your email and password.");
+      return;
+    }
+
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error) {
+      setMessage("Login error: " + error.message);
+      return;
+    }
+
+    setMessage("Login successful. Redirecting...");
+
+    window.location.href = "/dashboard";
+  }
+
+  async function logout() {
+    await supabase.auth.signOut();
+    setMessage("Logged out.");
+  }
+
+  return (
+    <main>
+      <h1>Login</h1>
+      <p>Sign in to CJ Joinery Workflow.</p>
+
+      {message && <div className="status-box">{message}</div>}
+
+      <div className="card" style={{ maxWidth: 520 }}>
+        <h2>Email & Password Login</h2>
+
+        <div style={{ display: "grid", gap: 12 }}>
+          <input
+            type="email"
+            value={email}
+            placeholder="Email address"
+            onChange={(e) => setEmail(e.target.value)}
+          />
+
+          <input
+            type="password"
+            value={password}
+            placeholder="Password"
+            onChange={(e) => setPassword(e.target.value)}
+          />
+
+          <button type="button" onClick={login}>
+            Login
+          </button>
+
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={logout}
+          >
+            Logout
+          </button>
+        </div>
+      </div>
+    </main>
+  );
+}
