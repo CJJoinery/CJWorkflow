@@ -1,0 +1,1 @@
+export default function Home(){return <main><div className="card"><h1>SiteProgrammePro</h1><p>Create, share and manage site programmes without messy spreadsheets.</p><a href="/dashboard"><button>Open Dashboard</button></a></div></main>}
